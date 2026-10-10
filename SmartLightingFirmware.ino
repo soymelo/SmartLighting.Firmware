@@ -15,17 +15,22 @@ TopologyConfig lastNetworkTopology;
 void networkTask(void*) {
   WifiService::begin();
   unsigned long lastFetch = 0;
+  unsigned long fetchInterval = 0;
   for (;;) {
     WifiService::update();
     if (WiFi.status() == WL_CONNECTED &&
         DeviceConfig::DeviceId[0] != '\0' &&
-        (lastFetch == 0 || millis() - lastFetch >= DeviceConfig::TopologyRefreshMs)) {
+        (lastFetch == 0 || millis() - lastFetch >= fetchInterval)) {
       lastFetch = millis();
       TopologyConfig downloaded;
-      if (TopologyService::fetch(downloaded) &&
-          memcmp(&downloaded, &lastNetworkTopology, sizeof(downloaded)) != 0) {
-        lastNetworkTopology = downloaded;
-        xQueueOverwrite(topologyUpdates, &downloaded);
+      if (TopologyService::fetch(downloaded)) {
+        fetchInterval = DeviceConfig::TopologyRefreshMs;
+        if (memcmp(&downloaded, &lastNetworkTopology, sizeof(downloaded)) != 0) {
+          lastNetworkTopology = downloaded;
+          xQueueOverwrite(topologyUpdates, &downloaded);
+        }
+      } else {
+        fetchInterval = 10000;
       }
     }
     TelemetryService::update();

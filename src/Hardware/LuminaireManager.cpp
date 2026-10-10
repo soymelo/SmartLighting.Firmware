@@ -34,12 +34,12 @@ bool LuminaireManager::begin(const TopologyConfig& topology) {
   return true;
 }
 
-uint8_t LuminaireManager::update(unsigned long now, uint8_t activePairs) {
+uint8_t LuminaireManager::update(unsigned long now, uint8_t activeLuminaires) {
   uint8_t changed = 0;
   for (uint8_t index = 0; index < count; ++index) {
     const LuminaireConfig& luminaire = luminaires[index];
     const uint8_t slot = luminaire.slot;
-    const uint8_t target = (activePairs & (1U << ((slot - 1) / 2)))
+    const uint8_t target = (activeLuminaires & (1U << (slot - 1)))
                              ? MaximumBrightness : BaseBrightness;
     if (brightness[slot] != target && now - lastFade[slot] >= FadeIntervalMs) {
       brightness[slot] += brightness[slot] < target ? 1 : -1;

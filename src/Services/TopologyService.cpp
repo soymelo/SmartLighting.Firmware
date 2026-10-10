@@ -9,6 +9,7 @@
 #include "../../DeviceConfig.h"
 
 namespace {
+constexpr char CacheKey[] = "topology-v2";
 
 bool readGuid(const cJSON* object, const char* key, char (&destination)[37]) {
   const cJSON* value = cJSON_GetObjectItemCaseSensitive(object, key);
@@ -46,7 +47,7 @@ bool parse(const String& json, TopologyConfig& topology) {
   cJSON* root = cJSON_Parse(json.c_str());
   if (root == nullptr) return false;
 
-  TopologyConfig next;
+  TopologyConfig next{};
   bool valid = readGuid(root, "deviceId", next.deviceId) &&
                String(next.deviceId).equalsIgnoreCase(DeviceConfig::DeviceId);
   const cJSON* zones = cJSON_GetObjectItemCaseSensitive(root, "zones");
@@ -68,38 +69,89 @@ bool parse(const String& json, TopologyConfig& topology) {
         break;
       }
 
+      uint8_t zoneSensorMask = 0;
+      uint8_t zoneLuminaireMask = 0;
       const cJSON* item = nullptr;
       cJSON_ArrayForEach(item, sensors) {
-        if (next.sensorCount >= 3) { valid = false; break; }
-        SensorConfig& sensor = next.sensors[next.sensorCount];
-        valid = readGuid(item, "sensorId", sensor.id) &&
-                readSlotAndGpio(item, 3, true, sensor.slot, sensor.gpio);
-        if (!valid || sensorSlots[sensor.slot] || usedPins[sensor.gpio]) {
+        char sensorId[37] = {};
+        char ownerId[37] = {};
+        uint8_t slot = 0;
+        uint8_t gpio = 0;
+        valid = readGuid(item, "sensorId", sensorId) &&
+                readGuid(item, "deviceId", ownerId) &&
+                readSlotAndGpio(item, 3, true, slot, gpio);
+        if (!valid) break;
+
+        uint8_t index = 0;
+        while (index < next.controlSensorCount &&
+               !String(next.controlSensors[index].id).equalsIgnoreCase(sensorId))
+          ++index;
+        if (index == next.controlSensorCount) {
+          if (next.controlSensorCount >= 6) { valid = false; break; }
+          ControlSensorConfig& controlSensor = next.controlSensors[index];
+          strcpy(controlSensor.id, sensorId);
+          strcpy(controlSensor.deviceId, ownerId);
+          controlSensor.slot = slot;
+          ++next.controlSensorCount;
+        } else if (!String(next.controlSensors[index].deviceId).equalsIgnoreCase(ownerId) ||
+                   next.controlSensors[index].slot != slot) {
           valid = false;
           break;
         }
+        zoneSensorMask |= 1U << index;
+
+        if (!String(ownerId).equalsIgnoreCase(next.deviceId)) continue;
+        if (sensorSlots[slot] || usedPins[gpio] || next.sensorCount >= 3) {
+          valid = false;
+          break;
+        }
+        SensorConfig& sensor = next.sensors[next.sensorCount++];
+        strcpy(sensor.id, sensorId);
         strcpy(sensor.zoneId, zoneId);
-        sensorSlots[sensor.slot] = true;
-        usedPins[sensor.gpio] = true;
-        ++next.sensorCount;
+        sensor.slot = slot;
+        sensor.gpio = gpio;
+        sensorSlots[slot] = true;
+        usedPins[gpio] = true;
       }
       if (!valid) break;
 
       cJSON_ArrayForEach(item, luminaires) {
-        if (next.luminaireCount >= 6) { valid = false; break; }
-        LuminaireConfig& luminaire = next.luminaires[next.luminaireCount];
-        valid = readGuid(item, "luminaireId", luminaire.id) &&
-                readSlotAndGpio(item, 6, false, luminaire.slot, luminaire.gpio);
-        if (!valid || luminaireSlots[luminaire.slot] || usedPins[luminaire.gpio]) {
+        char luminaireId[37] = {};
+        char ownerId[37] = {};
+        uint8_t slot = 0;
+        uint8_t gpio = 0;
+        valid = readGuid(item, "luminaireId", luminaireId) &&
+                readGuid(item, "deviceId", ownerId) &&
+                readSlotAndGpio(item, 6, false, slot, gpio);
+        if (!valid) break;
+        if (!String(ownerId).equalsIgnoreCase(next.deviceId)) continue;
+
+        uint8_t index = 0;
+        while (index < next.luminaireCount &&
+               !String(next.luminaires[index].id).equalsIgnoreCase(luminaireId))
+          ++index;
+        if (index == next.luminaireCount) {
+          if (next.luminaireCount >= 6 || luminaireSlots[slot] || usedPins[gpio]) {
+            valid = false;
+            break;
+          }
+          LuminaireConfig& luminaire = next.luminaires[next.luminaireCount++];
+          strcpy(luminaire.id, luminaireId);
+          luminaire.slot = slot;
+          luminaire.gpio = gpio;
+          luminaireSlots[slot] = true;
+          usedPins[gpio] = true;
+        } else if (next.luminaires[index].slot != slot ||
+                   next.luminaires[index].gpio != gpio) {
           valid = false;
           break;
         }
-        strcpy(luminaire.zoneId, zoneId);
-        luminaireSlots[luminaire.slot] = true;
-        usedPins[luminaire.gpio] = true;
-        ++next.luminaireCount;
+        zoneLuminaireMask |= 1U << (slot - 1);
       }
       if (!valid) break;
+      for (uint8_t slot = 1; slot <= 6; ++slot)
+        if (zoneLuminaireMask & (1U << (slot - 1)))
+          next.luminaireSensorMask[slot] |= zoneSensorMask;
     }
   }
   cJSON_Delete(root);
@@ -112,9 +164,15 @@ bool parse(const String& json, TopologyConfig& topology) {
 bool TopologyService::loadCached(TopologyConfig& topology) {
   Preferences preferences;
   if (!preferences.begin("smart-light", true)) return false;
-  const String json = preferences.getString("topology", "");
+  TopologyConfig cached{};
+  const bool loaded = preferences.getBytesLength(CacheKey) == sizeof(cached) &&
+                      preferences.getBytes(CacheKey, &cached, sizeof(cached)) == sizeof(cached);
   preferences.end();
-  return json.length() > 0 && parse(json, topology);
+  if (!loaded || !String(cached.deviceId).equalsIgnoreCase(DeviceConfig::DeviceId) ||
+      cached.sensorCount > 3 || cached.luminaireCount > 6 ||
+      cached.controlSensorCount > 6) return false;
+  topology = cached;
+  return true;
 }
 
 bool TopologyService::fetch(TopologyConfig& topology) {
@@ -124,19 +182,35 @@ bool TopologyService::fetch(TopologyConfig& topology) {
   const String url = String(DeviceConfig::ApiBaseUrl) + "/devices/" +
                             DeviceConfig::DeviceId + "/topology";
   if (!http.begin(client, url)) return false;
-  http.setTimeout(1500);
+  http.setConnectTimeout(5000);
+  http.setTimeout(5000);
   const int status = http.GET();
   const String json = status == HTTP_CODE_OK ? http.getString() : "";
   http.end();
-  if (status != HTTP_CODE_OK || !parse(json, topology)) {
-    Serial.printf("Topologia rejeitada (HTTP %d).\n", status);
+  if (status != HTTP_CODE_OK) {
+    if (status < 0)
+      Serial.printf("Falha ao buscar topologia: %s (HTTP %d).\n",
+                    HTTPClient::errorToString(status).c_str(), status);
+    else
+      Serial.printf("Topologia rejeitada pela API (HTTP %d).\n", status);
+    return false;
+  }
+  if (!parse(json, topology)) {
+    Serial.printf("Topologia recebida, mas invalida (%u bytes).\n",
+                  static_cast<unsigned>(json.length()));
     return false;
   }
 
   Preferences preferences;
   if (preferences.begin("smart-light", false)) {
-    if (preferences.getString("topology", "") != json)
-      preferences.putString("topology", json);
+    // O JSON do projeto pode ultrapassar o limite de strings da NVS.
+    if (preferences.isKey("topology")) preferences.remove("topology");
+    TopologyConfig cached{};
+    const bool unchanged = preferences.getBytesLength(CacheKey) == sizeof(cached) &&
+                           preferences.getBytes(CacheKey, &cached, sizeof(cached)) == sizeof(cached) &&
+                           memcmp(&cached, &topology, sizeof(topology)) == 0;
+    if (!unchanged && preferences.putBytes(CacheKey, &topology, sizeof(topology)) != sizeof(topology))
+      Serial.println("Nao foi possivel salvar a topologia local.");
     preferences.end();
   }
   return true;
@@ -152,7 +226,11 @@ void TopologyService::print(const TopologyConfig& topology) {
   }
   for (const LuminaireConfig& luminaire : topology.luminaires) {
     if (luminaire.slot == 0) continue;
-    Serial.printf("LED %u | ID %s | zona %s | GPIO %u\n",
-                  luminaire.slot, luminaire.id, luminaire.zoneId, luminaire.gpio);
+    Serial.printf("LED %u | ID %s | GPIO %u | sensores:",
+                  luminaire.slot, luminaire.id, luminaire.gpio);
+    for (uint8_t index = 0; index < topology.controlSensorCount; ++index)
+      if (topology.luminaireSensorMask[luminaire.slot] & (1U << index))
+        Serial.printf(" %s", topology.controlSensors[index].id);
+    Serial.println();
   }
 }

@@ -17,7 +17,7 @@ porta de upload está configurada neste projeto.
 `src/Models.h` define a topologia usada pelos módulos:
 
 - `src/Hardware/`: leitura dos sensores e PWM das luminárias.
-- `src/Control/`: relação entre sensores, pares de LEDs e comunicação D13/D14.
+- `src/Control/`: acionamento por zonas e comunicação serial entre placas em D13/D14.
 - `src/Services/`: Wi-Fi, topologia/cache e telemetria/heartbeat.
 
 Os arquivos `.h` declaram as interfaces; os `.cpp` contêm as implementações.
@@ -70,11 +70,19 @@ quando a rede ou a API estiverem indisponíveis.
   testado para sensores ou LEDs e se não aparece duas vezes.
 - Sensor ativo em LOW. Um evento é criado somente na transição de inativo
   para ativo.
-- Sensor 1 controla LEDs 1 e 2; Sensor 2, LEDs 3 e 4; Sensor 3, LEDs 5 e 6.
-  O sinal da outra placa também acende o par da borda: LEDs 5 e 6 na placa 1,
-  LEDs 1 e 2 na placa 2.
+- A API informa as zonas do projeto com os sensores e LEDs participantes e o
+  dispositivo de cada componente. O firmware configura somente os componentes
+  ligados à sua placa, mas usa todos os sensores do projeto para decidir quais
+  LEDs locais acender. Um LED em várias zonas é configurado uma única vez.
+- Quando um sensor detecta movimento, sua placa envia o ID dele pela UART nos
+  GPIOs 13 e 14; enquanto estiver ativo, repete esse ID a cada segundo e envia
+  a liberação ao terminar. A outra placa aplica as mesmas zonas mesmo sem
+  consultar a API a cada detecção.
+- Um LED permanece no brilho máximo enquanto qualquer sensor de suas zonas
+  estiver ativo ou dentro do prazo de acionamento. A perda das mensagens da
+  outra placa encerra esse prazo, sem manter o LED aceso indefinidamente.
 - PWM em 5 kHz, 8 bits: brilho base 20/255, máximo 255/255, fade de um
-  passo a cada 10 ms. O brilho começa a voltar ao base 7 s após o último
+  passo a cada 10 ms. O brilho começa a voltar ao base 5 s após o último
   movimento.
 - Wi-Fi, consulta de topologia e envio de telemetria rodam em outra tarefa;
   o controle local não espera uma requisição HTTP. Telemetria usa lotes de
@@ -86,10 +94,13 @@ quando a rede ou a API estiverem indisponíveis.
 1. Confira na Serial os IDs, slots e GPIOs da topologia de cada placa.
 2. Desligue a API e reinicie a placa: a topologia local deve carregar e os
    LEDs devem continuar respondendo aos sensores.
-3. Ative e mantenha cada sensor em LOW: confira o par correspondente, o fade
-   e apenas um SensorEvent por ativação.
-4. Libere o sensor e espere 7 s: confira o retorno ao brilho base.
-5. Teste D13 e D14 nos dois sentidos com GND comum.
+3. Configure duas zonas sobrepostas: S1 aciona L1, L2 e L3; S2 aciona L3,
+   L4 e L5. Ative cada sensor em LOW e confirme que só os LEDs configurados
+   sobem de brilho. L3 deve permanecer aceso enquanto S1 ou S2 estiver ativo.
+4. Libere o último sensor e espere 5 s: confira o retorno ao brilho base.
+5. Configure uma zona com sensor e LED em placas diferentes. Teste D13 e D14
+   nos dois sentidos com GND comum. Depois desconecte a comunicação e confirme
+   que LEDs remotos voltam ao brilho base após 5 s.
 6. Religue a API: confira heartbeat, SensorEvent, mudanças de brilho e
    ausência de eventos duplicados no dashboard.
 
