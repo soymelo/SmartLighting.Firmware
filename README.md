@@ -68,8 +68,9 @@ quando a rede ou a API estiverem indisponíveis.
 - A API fornece `slot` e `gpioNumber`; o firmware usa o GPIO recebido.
   Antes de configurar um pino, ele valida se pertence ao conjunto de pinos
   testado para sensores ou LEDs e se não aparece duas vezes.
-- Sensor ativo em LOW. Um evento é criado somente na transição de inativo
-  para ativo.
+- Sensor ativo em LOW. A ativação precisa permanecer estável por 100 ms e a
+  liberação por 1 s antes de mudar de estado. Um evento é criado somente na
+  transição confirmada de inativo para ativo.
 - A API informa as zonas do projeto com os sensores e LEDs participantes e o
   dispositivo de cada componente. O firmware configura somente os componentes
   ligados à sua placa, mas usa todos os sensores do projeto para decidir quais
