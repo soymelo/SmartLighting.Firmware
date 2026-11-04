@@ -34,11 +34,32 @@ $env:PYTHONPATH = "src"
 .\.venv\Scripts\python.exe -m smartlighting_ml.export_cpp_weights --output ..\SmartLighting.Firmware\src\Control\ActivityModelWeights.h
 ```
 
-O comentário no header traz o SHA-256 do JSON de origem, e cada peso tem o
-nome da entrada correspondente. O arquivo ainda **não é usado pelo sketch**:
-o firmware continua com repouso fixo PWM 20. O próximo trabalho será escrever
-a fórmula de inferência em C++ e conferir as previsões com os oito casos de
-`SmartLighting.ML/config/firmware_reference.json`.
+O comentário no header traz o SHA-256 dos JSONs de modelo e política; cada
+peso tem o nome da entrada correspondente. `ActivityPredictor::predict()`, em
+`src/Control/ActivityPredictor.cpp`, recebe hora local (0–23), dia da semana
+(0=segunda, 6=domingo) e ativações dos últimos 30 minutos. Devolve a média
+prevista, a chance de atividade nos próximos 15 minutos e PWM 10/20/50.
+Entradas de hora ou dia inválidas são rejeitadas. A fórmula reproduz o modelo
+Python sem consultar a API nem ler JSON na placa.
+
+**Ainda não há integração com sensores ou LEDs:** o controlador não chama essa
+função, e o repouso físico permanece PWM 20. O próximo trabalho será contar
+ativações por zona e aplicar a previsão aos LEDs, preservando o acionamento
+imediato e o fade.
+
+Para conferir o cálculo fora da placa, a partir da raiz deste projeto em um
+terminal Ubuntu/WSL com `g++` e `python3`:
+
+```bash
+mkdir -p .pio
+g++ -std=c++17 -O2 -Wall -Wextra -Werror src/Control/ActivityPredictor.cpp test/activity_predictor_cli.cpp -o .pio/activity_predictor_native
+python3 ../SmartLighting.ML/src/smartlighting_ml/verify_cpp_predictor.py --reference ../SmartLighting.ML/config/firmware_reference.json --program .pio/activity_predictor_native
+```
+
+O programa de teste em `test/` não entra no firmware. Ele executa os oito casos
+congelados em `firmware_reference.json`; a verificação exige probabilidades
+próximas (tolerância de 1e-9) e PWM idêntico. `pio run -e esp32dev` verifica
+também a compilação para a placa, mas não executa o modelo fisicamente.
 
 ## Configuração local e GitHub
 
