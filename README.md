@@ -22,6 +22,24 @@ porta de upload está configurada neste projeto.
 
 Os arquivos `.h` declaram as interfaces; os `.cpp` contêm as implementações.
 
+## Pesos preparados para o ML
+
+`src/Control/ActivityModelWeights.h` contém os 27 pesos do modelo geral
+escolhido no projeto `SmartLighting.ML`. Ele é **gerado** de
+`SmartLighting.ML/config/firmware_model.json`, não editado manualmente.
+Na raiz de `SmartLighting.ML`, regenere após uma mudança deliberada do modelo:
+
+```powershell
+$env:PYTHONPATH = "src"
+.\.venv\Scripts\python.exe -m smartlighting_ml.export_cpp_weights --output ..\SmartLighting.Firmware\src\Control\ActivityModelWeights.h
+```
+
+O comentário no header traz o SHA-256 do JSON de origem, e cada peso tem o
+nome da entrada correspondente. O arquivo ainda **não é usado pelo sketch**:
+o firmware continua com repouso fixo PWM 20. O próximo trabalho será escrever
+a fórmula de inferência em C++ e conferir as previsões com os oito casos de
+`SmartLighting.ML/config/firmware_reference.json`.
+
 ## Configuração local e GitHub
 
 `DeviceConfig.example.h` e `NetworkConfig.example.h` são modelos públicos, com
