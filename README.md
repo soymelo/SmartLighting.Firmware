@@ -22,6 +22,29 @@ porta de upload está configurada neste projeto.
 
 Os arquivos `.h` declaram as interfaces; os `.cpp` contêm as implementações.
 
+### Zonas na topologia e cache local
+
+A resposta de topologia da API já contém zonas com seus sensores e luminárias.
+`TopologyService` agora guarda também, para cada zona, seu ID, uma máscara dos
+sensores do projeto e uma máscara dos LEDs **desta placa**. Esse mapa prepara a
+contagem e o repouso por zona; ainda não muda o brilho. A máscara antiga que
+liga sensores aos LEDs continua atendendo ao acionamento imediato. O limite
+atual é de 12 zonas, seis sensores do projeto, três sensores e seis LEDs por
+ESP32. São limites de armazenamento do firmware, não IDs ou vínculos fixos da
+maquete.
+
+Topologias novas são gravadas sob a chave `topology-v3` na flash. Ao iniciar,
+o firmware tenta ler v3. Se encontrar apenas o cache antigo `topology-v2`,
+recupera os sensores, LEDs e vínculos de acionamento imediato, com zero zonas
+disponíveis para ML. Assim os sensores continuam funcionando em PWM de repouso
+fixo 20 mesmo sem API. Quando a API voltar, a topologia completa é recebida e
+salva em v3; o cache v2 permanece disponível como alternativa. Antes de usar
+previsões, ainda precisaremos implementar histórico e validar o horário local.
+
+O PlatformIO pode criar `SmartLightingFirmware.ino.cpp` na raiz durante o
+build. Esse arquivo gerado está no `.gitignore`; não deve ser editado nem
+removido manualmente entre compilações incrementais.
+
 ## Pesos preparados para o ML
 
 `src/Control/ActivityModelWeights.h` contém os 27 pesos do modelo geral

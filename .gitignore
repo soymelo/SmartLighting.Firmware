@@ -6,5 +6,6 @@
 .vscode/launch.json
 .vscode/ipch
 compile_commands.json
+SmartLightingFirmware.ino.cpp
 DeviceConfig.h
 NetworkConfig.h

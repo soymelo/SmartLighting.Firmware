@@ -4,12 +4,38 @@
 #include <Preferences.h>
 #include <WiFi.h>
 #include <cJSON.h>
+#include <cstddef>
 #include <cstring>
 
 #include "../../DeviceConfig.h"
 
 namespace {
-constexpr char CacheKey[] = "topology-v2";
+constexpr char CacheKeyV2[] = "topology-v2";
+constexpr char CacheKeyV3[] = "topology-v3";
+
+// Layout binário gravado pelas versões anteriores. Não alterar: permite
+// recuperar o acionamento local mesmo ao iniciar sem API após a atualização.
+struct LegacyTopologyV2 {
+  char deviceId[37] = {};
+  SensorConfig sensors[3] = {};
+  LuminaireConfig luminaires[6] = {};
+  ControlSensorConfig controlSensors[6] = {};
+  uint8_t luminaireSensorMask[7] = {};
+  uint8_t sensorCount = 0;
+  uint8_t luminaireCount = 0;
+  uint8_t controlSensorCount = 0;
+};
+
+static_assert(sizeof(LegacyTopologyV2) == 959);
+static_assert(offsetof(TopologyConfig, zones) == sizeof(LegacyTopologyV2));
+
+template <typename T>
+bool validBase(const T& cached) {
+  return memchr(cached.deviceId, '\0', sizeof(cached.deviceId)) != nullptr &&
+         String(cached.deviceId).equalsIgnoreCase(DeviceConfig::DeviceId) &&
+         cached.sensorCount <= 3 && cached.luminaireCount <= 6 &&
+         cached.controlSensorCount <= 6;
+}
 
 bool readGuid(const cJSON* object, const char* key, char (&destination)[37]) {
   const cJSON* value = cJSON_GetObjectItemCaseSensitive(object, key);
@@ -68,6 +94,16 @@ bool parse(const String& json, TopologyConfig& topology) {
         valid = false;
         break;
       }
+      if (next.zoneCount >= TopologyConfig::MaxZones) {
+        valid = false;
+        break;
+      }
+      for (uint8_t index = 0; index < next.zoneCount; ++index)
+        if (String(next.zones[index].zoneId).equalsIgnoreCase(zoneId)) {
+          valid = false;
+          break;
+        }
+      if (!valid) break;
 
       uint8_t zoneSensorMask = 0;
       uint8_t zoneLuminaireMask = 0;
@@ -149,6 +185,10 @@ bool parse(const String& json, TopologyConfig& topology) {
         zoneLuminaireMask |= 1U << (slot - 1);
       }
       if (!valid) break;
+      ZoneConfig& zoneConfig = next.zones[next.zoneCount++];
+      strcpy(zoneConfig.zoneId, zoneId);
+      zoneConfig.controlSensorMask = zoneSensorMask;
+      zoneConfig.localLuminaireMask = zoneLuminaireMask;
       for (uint8_t slot = 1; slot <= 6; ++slot)
         if (zoneLuminaireMask & (1U << (slot - 1)))
           next.luminaireSensorMask[slot] |= zoneSensorMask;
@@ -164,14 +204,29 @@ bool parse(const String& json, TopologyConfig& topology) {
 bool TopologyService::loadCached(TopologyConfig& topology) {
   Preferences preferences;
   if (!preferences.begin("smart-light", true)) return false;
-  TopologyConfig cached{};
-  const bool loaded = preferences.getBytesLength(CacheKey) == sizeof(cached) &&
-                      preferences.getBytes(CacheKey, &cached, sizeof(cached)) == sizeof(cached);
+  TopologyConfig current{};
+  const bool loadedCurrent =
+      preferences.getBytesLength(CacheKeyV3) == sizeof(current) &&
+      preferences.getBytes(CacheKeyV3, &current, sizeof(current)) == sizeof(current) &&
+      validBase(current) && current.zoneCount <= TopologyConfig::MaxZones;
+  if (loadedCurrent) {
+    preferences.end();
+    topology = current;
+    return true;
+  }
+
+  LegacyTopologyV2 previous{};
+  const bool loadedPrevious =
+      preferences.getBytesLength(CacheKeyV2) == sizeof(previous) &&
+      preferences.getBytes(CacheKeyV2, &previous, sizeof(previous)) == sizeof(previous) &&
+      validBase(previous);
   preferences.end();
-  if (!loaded || !String(cached.deviceId).equalsIgnoreCase(DeviceConfig::DeviceId) ||
-      cached.sensorCount > 3 || cached.luminaireCount > 6 ||
-      cached.controlSensorCount > 6) return false;
-  topology = cached;
+  if (!loadedPrevious) return false;
+
+  TopologyConfig migrated{};
+  memcpy(&migrated, &previous, sizeof(previous));
+  topology = migrated;
+  Serial.println("Cache v2 recuperado: sensores ativos; zonas ML aguardam a API.");
   return true;
 }
 
@@ -206,10 +261,10 @@ bool TopologyService::fetch(TopologyConfig& topology) {
     // O JSON do projeto pode ultrapassar o limite de strings da NVS.
     if (preferences.isKey("topology")) preferences.remove("topology");
     TopologyConfig cached{};
-    const bool unchanged = preferences.getBytesLength(CacheKey) == sizeof(cached) &&
-                           preferences.getBytes(CacheKey, &cached, sizeof(cached)) == sizeof(cached) &&
+    const bool unchanged = preferences.getBytesLength(CacheKeyV3) == sizeof(cached) &&
+                           preferences.getBytes(CacheKeyV3, &cached, sizeof(cached)) == sizeof(cached) &&
                            memcmp(&cached, &topology, sizeof(topology)) == 0;
-    if (!unchanged && preferences.putBytes(CacheKey, &topology, sizeof(topology)) != sizeof(topology))
+    if (!unchanged && preferences.putBytes(CacheKeyV3, &topology, sizeof(topology)) != sizeof(topology))
       Serial.println("Nao foi possivel salvar a topologia local.");
     preferences.end();
   }
@@ -217,8 +272,14 @@ bool TopologyService::fetch(TopologyConfig& topology) {
 }
 
 void TopologyService::print(const TopologyConfig& topology) {
-  Serial.printf("Dispositivo %s: %u sensor(es), %u luminaria(s)\n",
-                topology.deviceId, topology.sensorCount, topology.luminaireCount);
+  Serial.printf("Dispositivo %s: %u sensor(es), %u luminaria(s), %u zona(s) ML\n",
+                topology.deviceId, topology.sensorCount, topology.luminaireCount,
+                topology.zoneCount);
+  for (uint8_t index = 0; index < topology.zoneCount; ++index)
+    Serial.printf("Zona %s | sensores 0x%02X | LEDs locais 0x%02X\n",
+                  topology.zones[index].zoneId,
+                  topology.zones[index].controlSensorMask,
+                  topology.zones[index].localLuminaireMask);
   for (const SensorConfig& sensor : topology.sensors) {
     if (sensor.slot == 0) continue;
     Serial.printf("Sensor %u | ID %s | zona %s | GPIO %u\n",
