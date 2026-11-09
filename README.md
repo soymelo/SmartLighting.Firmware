@@ -38,8 +38,7 @@ o firmware tenta ler v3. Se encontrar apenas o cache antigo `topology-v2`,
 recupera os sensores, LEDs e vínculos de acionamento imediato, com zero zonas
 disponíveis para ML. Assim os sensores continuam funcionando em PWM de repouso
 fixo 20 mesmo sem API. Quando a API voltar, a topologia completa é recebida e
-salva em v3; o cache v2 permanece disponível como alternativa. Antes de usar
-previsões, ainda precisaremos implementar histórico e validar o horário local.
+salva em v3; o cache v2 permanece disponível como alternativa.
 
 `ZoneActivityCounter` conta uma ativação por início de detecção e associa o
 sensor às zonas da topologia. Cada placa registra suas detecções locais e envia
@@ -47,9 +46,25 @@ uma mensagem `E` por nova ativação à outra placa via UART. O receptor registr
 `E` para o sensor remoto correspondente. As mensagens existentes `A` (ativo,
 repetida enquanto houver movimento) e `R` (liberado) continuam controlando a
 iluminação imediata e não entram na contagem. As duas placas precisam executar
-esta versão para que as ativações remotas também sejam contadas. O total desde
-a última aplicação da topologia aparece no monitor serial; ainda não representa
-os últimos 15 ou 30 minutos.
+esta versão para que as ativações remotas também sejam contadas.
+
+`ZoneActivityCounter` mantém o total desde a última aplicação da topologia e,
+se o relógio UTC estiver válido, separa as ativações por zona em janelas de
+15 minutos. Guarda somente as duas últimas janelas completas, inclusive as
+vazias, para fornecer a soma dos 30 minutos anteriores. A janela que já estava
+em andamento ao ligar a placa ou sincronizar o relógio é descartada por ser
+parcial. Se o relógio ficar inválido ou mudar de forma descontínua, o histórico
+das janelas é reiniciado; o total acumulado continua disponível. Uma nova
+topologia reinicia tanto o total quanto as janelas.
+
+`ActivityClock` só aceita horário UTC a partir de 2025-01-01, como a validação
+existente da telemetria. Converte a hora de cada janela para UTC-3 fixo, o fuso
+usado nos cenários que treinaram os pesos atuais, e converte o dia da semana
+para 0=segunda até 6=domingo. O monitor serial mostra a hora local, a contagem
+da janela encerrada e, após duas janelas completas, a soma dos 30 minutos.
+Se a placa iniciar às 19h08, 19h00–19h15 é parcial; as primeiras janelas
+completas serão 19h15–19h30 e 19h30–19h45. A contagem de 30 minutos só estará
+disponível às 19h45. A API não é consultada para fechar janelas.
 
 O ponto de entrada é um `.cpp` comum, sem a conversão temporária de `.ino`.
 Isso permite compilações incrementais sem depender de um arquivo gerado na raiz.
@@ -74,10 +89,10 @@ prevista, a chance de atividade nos próximos 15 minutos e PWM 10/20/50.
 Entradas de hora ou dia inválidas são rejeitadas. A fórmula reproduz o modelo
 Python sem consultar a API nem ler JSON na placa.
 
-**O preditor ainda não controla os LEDs:** o controlador conta ativações locais
-e remotas, mas não chama `ActivityPredictor::predict()`. O repouso físico
-permanece PWM 20. Os próximos trabalhos serão formar janelas de 15 minutos e
-aplicar a previsão aos LEDs, preservando o acionamento imediato e o fade.
+**O preditor ainda não controla os LEDs:** o controlador monta o histórico de
+15 e 30 minutos, mas não chama `ActivityPredictor::predict()`. O repouso físico
+permanece PWM 20. O próximo trabalho será aplicar a previsão aos LEDs,
+preservando o acionamento imediato e o fade.
 
 Para conferir o cálculo fora da placa, a partir da raiz deste projeto em um
 terminal Ubuntu/WSL com `g++` e `python3`:
@@ -92,6 +107,17 @@ O programa de teste em `test/` não entra no firmware. Ele executa os oito casos
 congelados em `firmware_reference.json`; a verificação exige probabilidades
 próximas (tolerância de 1e-9) e PWM idêntico. `pio run -e esp32dev` verifica
 também a compilação para a placa, mas não executa o modelo fisicamente.
+
+Para conferir o histórico das janelas no WSL, sem esperar 30 minutos reais:
+
+```bash
+mkdir -p .pio
+g++ -std=c++17 -O2 -Wall -Wextra -Werror -Itest/support src/Control/ActivityClock.cpp src/Control/ZoneActivityCounter.cpp test/zone_activity_counter_test.cpp -o .pio/zone_activity_counter_test
+.pio/zone_activity_counter_test
+```
+
+Esse teste verifica início parcial, janela vazia, soma das duas janelas,
+ausência de contagem futura e reinício após mudança do relógio.
 
 ## Configuração local e GitHub
 

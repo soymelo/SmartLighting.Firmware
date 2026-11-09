@@ -2,12 +2,14 @@
 
 #include <HardwareSerial.h>
 #include <strings.h>
+#include <time.h>
 
 #include "../../DeviceConfig.h"
 #include "../Hardware/LuminaireManager.h"
 #include "../Hardware/SensorManager.h"
 #include "../Services/TelemetryService.h"
 #include "../Services/TopologyService.h"
+#include "ActivityClock.h"
 #include "ZoneActivityCounter.h"
 
 namespace {
@@ -46,6 +48,52 @@ void recordActivity(uint8_t sensorIndex, const char* origin) {
       Serial.printf("Zona %s: %lu ativacao(oes) desde a topologia (%s).\n",
                     current.zones[zone].zoneId,
                     static_cast<unsigned long>(activityCounter.total(zone)), origin);
+}
+
+void reportWindowChange(ZoneActivityCounter::WindowChange change) {
+  using WindowChange = ZoneActivityCounter::WindowChange;
+  if (change == WindowChange::None) return;
+  if (change == WindowChange::ClockLost) {
+    Serial.println("Relogio invalido: historico de janelas descartado.");
+    return;
+  }
+  if (change == WindowChange::ClockReset) {
+    Serial.println("Relogio mudou: historico de janelas reiniciado.");
+    return;
+  }
+  if (change == WindowChange::Started) {
+    Serial.println(activityCounter.currentWindowIsComplete()
+                       ? "Janela de 15 min iniciada no horario valido."
+                       : "Janela inicial parcial: aguardando proxima janela completa.");
+    return;
+  }
+  if (change == WindowChange::PartialDiscarded) {
+    Serial.println(activityCounter.currentWindowIsComplete()
+                       ? "Janela parcial descartada; nova janela completa iniciada."
+                       : "Janela parcial descartada; proxima janela tambem comecou parcial.");
+    return;
+  }
+
+  const std::time_t boundaryUtc = activityCounter.currentWindowStartUtc();
+  ActivityClock::LocalTime local;
+  if (!ActivityClock::fromUtc(boundaryUtc, local)) return;
+  const uint8_t minute = static_cast<uint8_t>((boundaryUtc / 60) % 60);
+  Serial.printf("Janela encerrada as %02u:%02u locais (dia da semana %u; seg=0).\n",
+                local.hour, minute, local.weekday);
+  for (uint8_t zone = 0; zone < current.zoneCount; ++zone) {
+    uint32_t previous30m = 0;
+    if (activityCounter.previous30mCount(zone, previous30m))
+      Serial.printf("Zona %s: janela %lu; ultimos 30 min %lu.\n",
+                    current.zones[zone].zoneId,
+                    static_cast<unsigned long>(activityCounter.lastClosedCount(zone)),
+                    static_cast<unsigned long>(previous30m));
+    else
+      Serial.printf("Zona %s: janela %lu; aguardando outra janela completa.\n",
+                    current.zones[zone].zoneId,
+                    static_cast<unsigned long>(activityCounter.lastClosedCount(zone)));
+  }
+  if (!activityCounter.currentWindowIsComplete())
+    Serial.println("Proxima janela comecou parcial e nao entrara no historico.");
 }
 
 void receivePeerMotion(unsigned long now) {
@@ -118,6 +166,7 @@ bool LightingController::applyTopology(const TopologyConfig& topology) {
 void LightingController::update() {
   if (!configured) return;
   const unsigned long now = millis();
+  reportWindowChange(activityCounter.advance(time(nullptr)));
   const uint8_t detections = SensorManager::update();
   for (uint8_t slot = 1; slot <= 3; ++slot) {
     if (detections & (1U << (slot - 1))) {
