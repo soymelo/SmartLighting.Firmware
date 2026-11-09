@@ -3,8 +3,8 @@
 Firmware para duas placas ESP32 DevKit / ESP-WROOM-32 com Arduino Core ESP32 3.3.11.
 Abra esta pasta no VS Code com a extensão PlatformIO. O `platformio.ini` fixa
 `esp32dev`, framework Arduino e pioarduino `55.03.311` (Arduino Core 3.3.11).
-`src_dir = .` inclui o sketch na raiz; `build_src_filter` seleciona esse `.ino`,
-seu `.ino.cpp` gerado automaticamente e os módulos `.cpp` em `src/`.
+`src_dir = .` inclui o programa na raiz; `build_src_filter` seleciona
+`SmartLightingFirmware.cpp` e os módulos `.cpp` em `src/`.
 O `src/main.cpp` de exemplo, criado pelo PlatformIO, permanece no projeto,
 mas não participa da compilação.
 
@@ -13,7 +13,7 @@ No VS Code, use **PlatformIO: Build** ou o ícone de marca de verificação na
 barra inferior. O monitor serial está configurado para 115200 baud. Nenhuma
 porta de upload está configurada neste projeto.
 
-`SmartLightingFirmware.ino` contém `setup()`, `loop()` e a tarefa de rede.
+`SmartLightingFirmware.cpp` contém `setup()`, `loop()` e a tarefa de rede.
 `src/Models.h` define a topologia usada pelos módulos:
 
 - `src/Hardware/`: leitura dos sensores e PWM das luminárias.
@@ -41,14 +41,18 @@ fixo 20 mesmo sem API. Quando a API voltar, a topologia completa é recebida e
 salva em v3; o cache v2 permanece disponível como alternativa. Antes de usar
 previsões, ainda precisaremos implementar histórico e validar o horário local.
 
-`ZoneActivityCounter` conta uma ativação por início de detecção local e associa
-o sensor às zonas da topologia. O total desde a última aplicação da topologia
-aparece no monitor serial. Ele ainda não representa os últimos 15 ou 30 minutos
-e não inclui ativações recebidas da outra placa.
+`ZoneActivityCounter` conta uma ativação por início de detecção e associa o
+sensor às zonas da topologia. Cada placa registra suas detecções locais e envia
+uma mensagem `E` por nova ativação à outra placa via UART. O receptor registra
+`E` para o sensor remoto correspondente. As mensagens existentes `A` (ativo,
+repetida enquanto houver movimento) e `R` (liberado) continuam controlando a
+iluminação imediata e não entram na contagem. As duas placas precisam executar
+esta versão para que as ativações remotas também sejam contadas. O total desde
+a última aplicação da topologia aparece no monitor serial; ainda não representa
+os últimos 15 ou 30 minutos.
 
-O PlatformIO pode criar `SmartLightingFirmware.ino.cpp` na raiz durante o
-build. Esse arquivo gerado está no `.gitignore`; não deve ser editado nem
-removido manualmente entre compilações incrementais.
+O ponto de entrada é um `.cpp` comum, sem a conversão temporária de `.ino`.
+Isso permite compilações incrementais sem depender de um arquivo gerado na raiz.
 
 ## Pesos preparados para o ML
 
@@ -70,11 +74,10 @@ prevista, a chance de atividade nos próximos 15 minutos e PWM 10/20/50.
 Entradas de hora ou dia inválidas são rejeitadas. A fórmula reproduz o modelo
 Python sem consultar a API nem ler JSON na placa.
 
-**O preditor ainda não controla os LEDs:** o controlador conta ativações locais,
-mas não chama `ActivityPredictor::predict()`. O repouso físico permanece PWM 20.
-Os próximos trabalhos serão contar ativações da outra placa, formar janelas de
-15 minutos e aplicar a previsão aos LEDs, preservando o acionamento imediato e
-o fade.
+**O preditor ainda não controla os LEDs:** o controlador conta ativações locais
+e remotas, mas não chama `ActivityPredictor::predict()`. O repouso físico
+permanece PWM 20. Os próximos trabalhos serão formar janelas de 15 minutos e
+aplicar a previsão aos LEDs, preservando o acionamento imediato e o fade.
 
 Para conferir o cálculo fora da placa, a partir da raiz deste projeto em um
 terminal Ubuntu/WSL com `g++` e `python3`:
@@ -126,7 +129,7 @@ podem incorporar valores das configurações locais.
    uma saída e uma entrada.
 6. Selecione ESP32 Dev Module e monitore a serial em 115200 baud.
 
-Sem ID ou Wi-Fi configurado, o sketch compila e avisa pela Serial, mas não
+Sem ID ou Wi-Fi configurado, o programa compila e avisa pela Serial, mas não
 consulta a API. Na primeira inicialização, a placa precisa buscar a topologia
 ao menos uma vez. Depois disso, usa a última topologia válida guardada na flash
 quando a rede ou a API estiverem indisponíveis.
@@ -143,9 +146,10 @@ quando a rede ou a API estiverem indisponíveis.
   dispositivo de cada componente. O firmware configura somente os componentes
   ligados à sua placa, mas usa todos os sensores do projeto para decidir quais
   LEDs locais acender. Um LED em várias zonas é configurado uma única vez.
-- Quando um sensor detecta movimento, sua placa envia o ID dele pela UART nos
-  GPIOs 13 e 14; enquanto estiver ativo, repete esse ID a cada segundo e envia
-  a liberação ao terminar. A outra placa aplica as mesmas zonas mesmo sem
+- Quando um sensor inicia uma detecção, sua placa envia `E` com o ID dele pela
+  UART nos GPIOs 13 e 14 para a contagem remota. As mensagens `A` e `R`
+  continuam indicando atividade e liberação; `A` é repetida a cada segundo
+  enquanto o sensor estiver ativo. A outra placa aplica as mesmas zonas sem
   consultar a API a cada detecção.
 - Um LED permanece no brilho máximo enquanto qualquer sensor de suas zonas
   estiver ativo ou dentro do prazo de acionamento. A perda das mensagens da

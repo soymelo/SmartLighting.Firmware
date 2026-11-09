@@ -39,19 +39,33 @@ const char* luminaireId(uint8_t slot) {
   return nullptr;
 }
 
+void recordActivity(uint8_t sensorIndex, const char* origin) {
+  const uint16_t affectedZones = activityCounter.record(sensorIndex);
+  for (uint8_t zone = 0; zone < current.zoneCount; ++zone)
+    if (affectedZones & (1U << zone))
+      Serial.printf("Zona %s: %lu ativacao(oes) desde a topologia (%s).\n",
+                    current.zones[zone].zoneId,
+                    static_cast<unsigned long>(activityCounter.total(zone)), origin);
+}
+
 void receivePeerMotion(unsigned long now) {
   while (peerSerial.available() > 0) {
     const char value = static_cast<char>(peerSerial.read());
     if (value == '\n') {
       if (receivedLength == 37 &&
-          (receivedMessage[0] == 'A' || receivedMessage[0] == 'R')) {
+          (receivedMessage[0] == 'A' || receivedMessage[0] == 'R' ||
+           receivedMessage[0] == 'E')) {
         receivedMessage[37] = '\0';
         for (uint8_t index = 0; index < current.controlSensorCount; ++index) {
           const ControlSensorConfig& sensor = current.controlSensors[index];
           if (strcasecmp(sensor.id, receivedMessage + 1) == 0 &&
               strcasecmp(sensor.deviceId, current.deviceId) != 0) {
-            lastMotion[index] = now;
-            sawMotion[index] = true;
+            if (receivedMessage[0] == 'E') {
+              recordActivity(index, "remota");
+            } else {
+              lastMotion[index] = now;
+              sawMotion[index] = true;
+            }
             break;
           }
         }
@@ -116,12 +130,12 @@ void LightingController::update() {
     const ControlSensorConfig& sensor = current.controlSensors[index];
     if (strcasecmp(sensor.deviceId, current.deviceId) != 0) continue;
     if (detections & (1U << (sensor.slot - 1))) {
-      const uint16_t affectedZones = activityCounter.record(index);
-      for (uint8_t zone = 0; zone < current.zoneCount; ++zone)
-        if (affectedZones & (1U << zone))
-          Serial.printf("Zona %s: %lu ativacao(oes) local(is) desde a topologia.\n",
-                        current.zones[zone].zoneId,
-                        static_cast<unsigned long>(activityCounter.total(zone)));
+      recordActivity(index, "local");
+      if (transmitPin != 0) {
+        peerSerial.write('E');
+        peerSerial.print(sensor.id);
+        peerSerial.write('\n');
+      }
     }
     const bool active = SensorManager::isActive(sensor.slot);
     const uint8_t slotIndex = sensor.slot - 1;

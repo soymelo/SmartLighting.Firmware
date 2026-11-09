@@ -1,3 +1,5 @@
+#include <Arduino.h>
+
 #include "DeviceConfig.h"
 #include "src/Models.h"
 #include "src/Control/LightingController.h"
