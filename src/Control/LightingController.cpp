@@ -8,11 +8,13 @@
 #include "../Hardware/SensorManager.h"
 #include "../Services/TelemetryService.h"
 #include "../Services/TopologyService.h"
+#include "ZoneActivityCounter.h"
 
 namespace {
 constexpr unsigned long HoldMs = 5000;
 constexpr unsigned long PeerRepeatMs = 1000;
 TopologyConfig current;
+ZoneActivityCounter activityCounter;
 bool configured = false;
 unsigned long lastMotion[6] = {};
 bool sawMotion[6] = {};
@@ -82,6 +84,7 @@ bool LightingController::applyTopology(const TopologyConfig& topology) {
   if (!LuminaireManager::begin(topology)) return false;
   SensorManager::begin(topology);
   current = topology;
+  activityCounter.reset(current);
   configured = true;
   for (uint8_t index = 0; index < 6; ++index) {
     lastMotion[index] = 0;
@@ -112,6 +115,14 @@ void LightingController::update() {
   for (uint8_t index = 0; index < current.controlSensorCount; ++index) {
     const ControlSensorConfig& sensor = current.controlSensors[index];
     if (strcasecmp(sensor.deviceId, current.deviceId) != 0) continue;
+    if (detections & (1U << (sensor.slot - 1))) {
+      const uint16_t affectedZones = activityCounter.record(index);
+      for (uint8_t zone = 0; zone < current.zoneCount; ++zone)
+        if (affectedZones & (1U << zone))
+          Serial.printf("Zona %s: %lu ativacao(oes) local(is) desde a topologia.\n",
+                        current.zones[zone].zoneId,
+                        static_cast<unsigned long>(activityCounter.total(zone)));
+    }
     const bool active = SensorManager::isActive(sensor.slot);
     const uint8_t slotIndex = sensor.slot - 1;
     if (!active) {

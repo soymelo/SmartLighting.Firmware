@@ -41,6 +41,11 @@ fixo 20 mesmo sem API. Quando a API voltar, a topologia completa é recebida e
 salva em v3; o cache v2 permanece disponível como alternativa. Antes de usar
 previsões, ainda precisaremos implementar histórico e validar o horário local.
 
+`ZoneActivityCounter` conta uma ativação por início de detecção local e associa
+o sensor às zonas da topologia. O total desde a última aplicação da topologia
+aparece no monitor serial. Ele ainda não representa os últimos 15 ou 30 minutos
+e não inclui ativações recebidas da outra placa.
+
 O PlatformIO pode criar `SmartLightingFirmware.ino.cpp` na raiz durante o
 build. Esse arquivo gerado está no `.gitignore`; não deve ser editado nem
 removido manualmente entre compilações incrementais.
@@ -65,10 +70,11 @@ prevista, a chance de atividade nos próximos 15 minutos e PWM 10/20/50.
 Entradas de hora ou dia inválidas são rejeitadas. A fórmula reproduz o modelo
 Python sem consultar a API nem ler JSON na placa.
 
-**Ainda não há integração com sensores ou LEDs:** o controlador não chama essa
-função, e o repouso físico permanece PWM 20. O próximo trabalho será contar
-ativações por zona e aplicar a previsão aos LEDs, preservando o acionamento
-imediato e o fade.
+**O preditor ainda não controla os LEDs:** o controlador conta ativações locais,
+mas não chama `ActivityPredictor::predict()`. O repouso físico permanece PWM 20.
+Os próximos trabalhos serão contar ativações da outra placa, formar janelas de
+15 minutos e aplicar a previsão aos LEDs, preservando o acionamento imediato e
+o fade.
 
 Para conferir o cálculo fora da placa, a partir da raiz deste projeto em um
 terminal Ubuntu/WSL com `g++` e `python3`:
