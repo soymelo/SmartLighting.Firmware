@@ -9,6 +9,7 @@
 #include "../Hardware/SensorManager.h"
 #include "../Services/TelemetryService.h"
 #include "../Services/TopologyService.h"
+#include "AdaptiveRestController.h"
 #include "ActivityClock.h"
 #include "ZoneActivityCounter.h"
 
@@ -17,6 +18,7 @@ constexpr unsigned long HoldMs = 5000;
 constexpr unsigned long PeerRepeatMs = 1000;
 TopologyConfig current;
 ZoneActivityCounter activityCounter;
+AdaptiveRestController restController;
 bool configured = false;
 unsigned long lastMotion[6] = {};
 bool sawMotion[6] = {};
@@ -82,18 +84,36 @@ void reportWindowChange(ZoneActivityCounter::WindowChange change) {
                 local.hour, minute, local.weekday);
   for (uint8_t zone = 0; zone < current.zoneCount; ++zone) {
     uint32_t previous30m = 0;
-    if (activityCounter.previous30mCount(zone, previous30m))
-      Serial.printf("Zona %s: janela %lu; ultimos 30 min %lu.\n",
+    if (activityCounter.previous30mCount(zone, previous30m) &&
+        restController.predicted(zone))
+      Serial.printf("Zona %s: janela %lu; 30 min %lu; chance %.1f%%; repouso PWM %u.\n",
                     current.zones[zone].zoneId,
                     static_cast<unsigned long>(activityCounter.lastClosedCount(zone)),
-                    static_cast<unsigned long>(previous30m));
+                    static_cast<unsigned long>(previous30m),
+                    restController.probability(zone) * 100.0,
+                    restController.zonePwm(zone));
     else
-      Serial.printf("Zona %s: janela %lu; aguardando outra janela completa.\n",
+      Serial.printf("Zona %s: janela %lu; aguardando historico ou sensor; repouso PWM 20.\n",
                     current.zones[zone].zoneId,
                     static_cast<unsigned long>(activityCounter.lastClosedCount(zone)));
   }
+  for (uint8_t index = 0; index < current.luminaireCount; ++index) {
+    const uint8_t slot = current.luminaires[index].slot;
+    Serial.printf("LED slot %u: repouso PWM %u.\n",
+                  slot, restController.luminairePwm(slot));
+  }
   if (!activityCounter.currentWindowIsComplete())
     Serial.println("Proxima janela comecou parcial e nao entrara no historico.");
+}
+
+void updateRestAtWindowChange(ZoneActivityCounter::WindowChange change) {
+  if (change == ZoneActivityCounter::WindowChange::None) return;
+  if (change == ZoneActivityCounter::WindowChange::Completed &&
+      activityCounter.currentWindowIsComplete())
+    restController.update(current, activityCounter,
+                          activityCounter.currentWindowStartUtc());
+  else
+    restController.reset();
 }
 
 void receivePeerMotion(unsigned long now) {
@@ -147,6 +167,7 @@ bool LightingController::applyTopology(const TopologyConfig& topology) {
   SensorManager::begin(topology);
   current = topology;
   activityCounter.reset(current);
+  restController.reset();
   configured = true;
   for (uint8_t index = 0; index < 6; ++index) {
     lastMotion[index] = 0;
@@ -166,7 +187,8 @@ bool LightingController::applyTopology(const TopologyConfig& topology) {
 void LightingController::update() {
   if (!configured) return;
   const unsigned long now = millis();
-  reportWindowChange(activityCounter.advance(time(nullptr)));
+  const auto windowChange = activityCounter.advance(time(nullptr));
+  updateRestAtWindowChange(windowChange);
   const uint8_t detections = SensorManager::update();
   for (uint8_t slot = 1; slot <= 3; ++slot) {
     if (detections & (1U << (slot - 1))) {
@@ -223,7 +245,8 @@ void LightingController::update() {
     if (current.luminaireSensorMask[slot] & activeSensors)
       activeLuminaires |= 1U << (slot - 1);
 
-  const uint8_t changed = LuminaireManager::update(now, activeLuminaires);
+  const uint8_t changed = LuminaireManager::update(
+      now, activeLuminaires, restController.luminairePwms());
   for (uint8_t slot = 1; slot <= 6; ++slot) {
     if (!(changed & (1U << (slot - 1)))) continue;
     const char* id = luminaireId(slot);
@@ -231,4 +254,5 @@ void LightingController::update() {
       TelemetryService::queueLuminaireChange(
         id, LuminaireManager::brightnessPercentage(slot));
   }
+  reportWindowChange(windowChange);
 }

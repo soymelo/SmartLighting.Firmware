@@ -1,7 +1,9 @@
 #include "LuminaireManager.h"
 
+#include "../Control/ActivityModelWeights.h"
+
 namespace {
-constexpr uint8_t BaseBrightness = 20;
+constexpr uint8_t BaseBrightness = ActivityModelWeights::StandardPwm;
 constexpr uint8_t MaximumBrightness = 255;
 constexpr unsigned long FadeIntervalMs = 10;
 LuminaireConfig luminaires[6];
@@ -34,13 +36,14 @@ bool LuminaireManager::begin(const TopologyConfig& topology) {
   return true;
 }
 
-uint8_t LuminaireManager::update(unsigned long now, uint8_t activeLuminaires) {
+uint8_t LuminaireManager::update(unsigned long now, uint8_t activeLuminaires,
+                                 const uint8_t (&restPwmBySlot)[7]) {
   uint8_t changed = 0;
   for (uint8_t index = 0; index < count; ++index) {
     const LuminaireConfig& luminaire = luminaires[index];
     const uint8_t slot = luminaire.slot;
     const uint8_t target = (activeLuminaires & (1U << (slot - 1)))
-                             ? MaximumBrightness : BaseBrightness;
+                             ? MaximumBrightness : restPwmBySlot[slot];
     if (brightness[slot] != target && now - lastFade[slot] >= FadeIntervalMs) {
       brightness[slot] += brightness[slot] < target ? 1 : -1;
       ledcWrite(luminaire.gpio, brightness[slot]);

@@ -26,8 +26,8 @@ Os arquivos `.h` declaram as interfaces; os `.cpp` contêm as implementações.
 
 A resposta de topologia da API já contém zonas com seus sensores e luminárias.
 `TopologyService` agora guarda também, para cada zona, seu ID, uma máscara dos
-sensores do projeto e uma máscara dos LEDs **desta placa**. Esse mapa prepara a
-contagem e o repouso por zona; ainda não muda o brilho. A máscara antiga que
+sensores do projeto e uma máscara dos LEDs **desta placa**. Esse mapa permite
+contar ativações por zona e combinar seus pedidos de repouso. A máscara que
 liga sensores aos LEDs continua atendendo ao acionamento imediato. O limite
 atual é de 12 zonas, seis sensores do projeto, três sensores e seis LEDs por
 ESP32. São limites de armazenamento do firmware, não IDs ou vínculos fixos da
@@ -89,10 +89,21 @@ prevista, a chance de atividade nos próximos 15 minutos e PWM 10/20/50.
 Entradas de hora ou dia inválidas são rejeitadas. A fórmula reproduz o modelo
 Python sem consultar a API nem ler JSON na placa.
 
-**O preditor ainda não controla os LEDs:** o controlador monta o histórico de
-15 e 30 minutos, mas não chama `ActivityPredictor::predict()`. O repouso físico
-permanece PWM 20. O próximo trabalho será aplicar a previsão aos LEDs,
-preservando o acionamento imediato e o fade.
+`AdaptiveRestController` executa `ActivityPredictor::predict()` no início de
+cada janela completa, usando a hora local, o dia da semana e as duas janelas
+encerradas da zona. A chance prevista define PWM 10, 20 ou 50 para o repouso
+dos próximos 15 minutos. Cada LED local recebe o **maior** pedido das zonas às
+quais pertence. Um LED sem zona associada usa PWM 20. Uma zona sem sensor,
+sem duas janelas completas ou sem horário válido pede PWM 20. Após uma mudança
+de topologia ou do relógio, o repouso volta a 20 até haver histórico válido.
+O sensor continua tendo prioridade: quando há movimento, o alvo é PWM 255;
+o fade de um ponto a cada 10 ms continua valendo para todas as transições.
+
+Exemplo às 03h: Z01 com zero ativações recentes pede PWM 10; Z02 com três
+ativações pede PWM 20. Um LED compartilhado pelas duas fica em PWM 20. Às
+18h, o modelo atual pode pedir PWM 50 mesmo com zero ativações recentes,
+porque o horário também entra na previsão. A API não é consultada para tomar
+essas decisões depois que a topologia estiver disponível na placa.
 
 Para conferir o cálculo fora da placa, a partir da raiz deste projeto em um
 terminal Ubuntu/WSL com `g++` e `python3`:
@@ -118,6 +129,17 @@ g++ -std=c++17 -O2 -Wall -Wextra -Werror -Itest/support src/Control/ActivityCloc
 
 Esse teste verifica início parcial, janela vazia, soma das duas janelas,
 ausência de contagem futura e reinício após mudança do relógio.
+
+Para conferir a integração entre histórico, modelo e LEDs compartilhados:
+
+```bash
+g++ -std=c++17 -O2 -Wall -Wextra -Werror -Itest/support src/Control/ActivityClock.cpp src/Control/ActivityPredictor.cpp src/Control/ZoneActivityCounter.cpp src/Control/AdaptiveRestController.cpp test/adaptive_rest_controller_test.cpp -o .pio/adaptive_rest_controller_test
+.pio/adaptive_rest_controller_test
+```
+
+Esse teste verifica PWM padrão sem histórico ou horário válido, PWM baixo e
+padrão em zonas distintas, maior pedido no LED compartilhado e PWM alto em
+horário de pico.
 
 ## Configuração local e GitHub
 
@@ -180,9 +202,9 @@ quando a rede ou a API estiverem indisponíveis.
 - Um LED permanece no brilho máximo enquanto qualquer sensor de suas zonas
   estiver ativo ou dentro do prazo de acionamento. A perda das mensagens da
   outra placa encerra esse prazo, sem manter o LED aceso indefinidamente.
-- PWM em 5 kHz, 8 bits: brilho base 20/255, máximo 255/255, fade de um
-  passo a cada 10 ms. O brilho começa a voltar ao base 5 s após o último
-  movimento.
+- PWM em 5 kHz, 8 bits: repouso adaptativo 10/255, 20/255 ou 50/255;
+  máximo 255/255 durante o acionamento. O alvo de repouso volta a valer 5 s
+  após o último movimento, com fade de um passo a cada 10 ms.
 - Wi-Fi, consulta de topologia e envio de telemetria rodam em outra tarefa;
   o controle local não espera uma requisição HTTP. Telemetria usa lotes de
   até 50 eventos e mantém na RAM os eventos pendentes para tentar novamente.
@@ -196,10 +218,17 @@ quando a rede ou a API estiverem indisponíveis.
 3. Configure duas zonas sobrepostas: S1 aciona L1, L2 e L3; S2 aciona L3,
    L4 e L5. Ative cada sensor em LOW e confirme que só os LEDs configurados
    sobem de brilho. L3 deve permanecer aceso enquanto S1 ou S2 estiver ativo.
-4. Libere o último sensor e espere 5 s: confira o retorno ao brilho base.
+4. Libere o último sensor e espere 5 s: confira o retorno gradual ao repouso
+   vigente (PWM 20 até haver histórico; depois, PWM 10, 20 ou 50).
 5. Configure uma zona com sensor e LED em placas diferentes. Teste D13 e D14
    nos dois sentidos com GND comum. Depois desconecte a comunicação e confirme
-   que LEDs remotos voltam ao brilho base após 5 s.
+   que LEDs remotos voltam ao repouso vigente após 5 s.
+7. Com horário sincronizado, acompanhe duas janelas completas de 15 min na
+   Serial. Confira a soma de 30 min, a chance prevista por zona e o maior PWM
+   escolhido para cada LED compartilhado. Um início no meio de uma janela
+   descarta essa primeira janela parcial.
+8. Depois de a topologia estar em cache, desligue apenas a API e verifique que
+   as novas janelas e o acionamento pelos sensores continuam na placa.
 6. Religue a API: confira heartbeat, SensorEvent, mudanças de brilho e
    ausência de eventos duplicados no dashboard.
 
