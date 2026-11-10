@@ -212,24 +212,27 @@ quando a rede ou a API estiverem indisponíveis.
 
 ## Verificação em bancada
 
-1. Confira na Serial os IDs, slots e GPIOs da topologia de cada placa.
-2. Desligue a API e reinicie a placa: a topologia local deve carregar e os
-   LEDs devem continuar respondendo aos sensores.
-3. Configure duas zonas sobrepostas: S1 aciona L1, L2 e L3; S2 aciona L3,
-   L4 e L5. Ative cada sensor em LOW e confirme que só os LEDs configurados
-   sobem de brilho. L3 deve permanecer aceso enquanto S1 ou S2 estiver ativo.
-4. Libere o último sensor e espere 5 s: confira o retorno gradual ao repouso
-   vigente (PWM 20 até haver histórico; depois, PWM 10, 20 ou 50).
-5. Configure uma zona com sensor e LED em placas diferentes. Teste D13 e D14
-   nos dois sentidos com GND comum. Depois desconecte a comunicação e confirme
-   que LEDs remotos voltam ao repouso vigente após 5 s.
-7. Com horário sincronizado, acompanhe duas janelas completas de 15 min na
+1. Com a API disponível, confira na Serial os IDs, slots e GPIOs da topologia
+   recebida por cada placa.
+2. Ative um sensor em LOW e confirme que os LEDs das suas zonas sobem de brilho.
+   A placa local e a remota devem contar uma ativação cada, sem contar as
+   mensagens `A` repetidas como novas passagens.
+3. Em zonas sobrepostas, confirme que o LED compartilhado responde a qualquer
+   sensor associado. Libere o último sensor e espere 5 s para observar o fade
+   até o repouso vigente.
+4. Teste um sensor e um LED em placas diferentes, nos dois sentidos da UART,
+   com GND comum. Se desconectar a UART, o LED remoto deve deixar de receber
+   novos acionamentos; reconecte-a antes de continuar.
+5. Com o relógio sincronizado, acompanhe duas janelas completas de 15 min na
    Serial. Confira a soma de 30 min, a chance prevista por zona e o maior PWM
-   escolhido para cada LED compartilhado. Um início no meio de uma janela
-   descarta essa primeira janela parcial.
-8. Depois de a topologia estar em cache, desligue apenas a API e verifique que
-   as novas janelas e o acionamento pelos sensores continuam na placa.
-6. Religue a API: confira heartbeat, SensorEvent, mudanças de brilho e
+   escolhido para cada LED compartilhado. Uma janela inicial parcial é
+   descartada.
+6. Desligue apenas a API, sem reiniciar as placas. Confira que as novas janelas
+   e o acionamento dos sensores continuam localmente.
+7. Ainda com a API desligada, reinicie uma placa: a topologia em cache deve
+   carregar e os sensores devem funcionar. O histórico recomeça vazio; sem
+   horário válido, o repouso permanece PWM 20.
+8. Religue a API e confira heartbeat, SensorEvent, mudanças de brilho e
    ausência de eventos duplicados no dashboard.
 
 Os testes elétricos, os dois sentidos de comunicação e a integração com a API
