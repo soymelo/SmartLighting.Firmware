@@ -85,13 +85,13 @@ O comentário no header traz o SHA-256 dos JSONs de modelo e política; cada
 peso tem o nome da entrada correspondente. `ActivityPredictor::predict()`, em
 `src/Control/ActivityPredictor.cpp`, recebe hora local (0–23), dia da semana
 (0=segunda, 6=domingo) e ativações dos últimos 30 minutos. Devolve a média
-prevista, a chance de atividade nos próximos 15 minutos e PWM 10/20/50.
+prevista, a chance de atividade nos próximos 15 minutos e PWM 10/20/40.
 Entradas de hora ou dia inválidas são rejeitadas. A fórmula reproduz o modelo
 Python sem consultar a API nem ler JSON na placa.
 
 `AdaptiveRestController` executa `ActivityPredictor::predict()` no início de
 cada janela completa, usando a hora local, o dia da semana e as duas janelas
-encerradas da zona. A chance prevista define PWM 10, 20 ou 50 para o repouso
+encerradas da zona. A chance prevista define PWM 10, 20 ou 40 para o repouso
 dos próximos 15 minutos. Cada LED local recebe o **maior** pedido das zonas às
 quais pertence. Um LED sem zona associada usa PWM 20. Uma zona sem sensor,
 sem duas janelas completas ou sem horário válido pede PWM 20. Após uma mudança
@@ -101,8 +101,9 @@ o fade de um ponto a cada 10 ms continua valendo para todas as transições.
 
 Exemplo às 03h: Z01 com zero ativações recentes pede PWM 10; Z02 com três
 ativações pede PWM 20. Um LED compartilhado pelas duas fica em PWM 20. Às
-18h, o modelo atual pode pedir PWM 50 mesmo com zero ativações recentes,
-porque o horário também entra na previsão. A API não é consultada para tomar
+18h, o modelo revisado pede PWM 20 com zero ativações recentes no caso de
+referência; às 19h, com uma ativação nos 30 minutos anteriores, pede PWM 40.
+O horário também entra na previsão. A API não é consultada para tomar
 essas decisões depois que a topologia estiver disponível na placa.
 
 Para conferir o cálculo fora da placa, a partir da raiz deste projeto em um
