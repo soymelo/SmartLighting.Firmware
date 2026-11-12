@@ -183,6 +183,28 @@ consulta a API. Na primeira inicialização, a placa precisa buscar a topologia
 ao menos uma vez. Depois disso, usa a última topologia válida guardada na flash
 quando a rede ou a API estiverem indisponíveis.
 
+### Monitorar as duas placas
+
+Com ambas conectadas por USB, liste as portas COM no PowerShell. Se houver
+dúvida sobre qual porta pertence a cada placa, desconecte uma, liste novamente
+e observe qual porta desapareceu:
+
+```powershell
+& "$env:USERPROFILE\.platformio\penv\Scripts\pio.exe" device list
+```
+
+Abra dois terminais, cada um com uma porta diferente:
+
+```powershell
+& "$env:USERPROFILE\.platformio\penv\Scripts\pio.exe" device monitor -p COM5 -b 115200
+& "$env:USERPROFILE\.platformio\penv\Scripts\pio.exe" device monitor -p COM6 -b 115200
+```
+
+Substitua `COM5` e `COM6` pelas portas encontradas. Confirme que os monitores
+mostram **DeviceIds diferentes**. Dois trechos com a mesma porta e o mesmo
+DeviceId são leituras da mesma placa; não validam a comunicação entre placas.
+Feche o monitor da porta antes de gravar o respectivo ESP32.
+
 ## Comportamento
 
 - A API fornece `slot` e `gpioNumber`; o firmware usa o GPIO recebido.
@@ -203,7 +225,7 @@ quando a rede ou a API estiverem indisponíveis.
 - Um LED permanece no brilho máximo enquanto qualquer sensor de suas zonas
   estiver ativo ou dentro do prazo de acionamento. A perda das mensagens da
   outra placa encerra esse prazo, sem manter o LED aceso indefinidamente.
-- PWM em 5 kHz, 8 bits: repouso adaptativo 10/255, 20/255 ou 50/255;
+- PWM em 5 kHz, 8 bits: repouso adaptativo 10/255, 20/255 ou 40/255;
   máximo 255/255 durante o acionamento. O alvo de repouso volta a valer 5 s
   após o último movimento, com fade de um passo a cada 10 ms.
 - Wi-Fi, consulta de topologia e envio de telemetria rodam em outra tarefa;

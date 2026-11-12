@@ -50,15 +50,17 @@ int main() {
   assert(rest.luminairePwm(1) == 20);
   topology.zoneCount = 2;
 
-  // Às 18h locais o modelo pede PWM alto mesmo com histórico sem eventos.
+  // Às 18h locais, uma ativação recente em cada zona leva ao PWM alto.
   constexpr std::time_t atEighteenLocal = 1735765200;
   history.reset(topology);
   history.advance(atEighteenLocal - 30 * 60);
+  assert(history.record(0) == 1);
+  assert(history.record(1) == 2);
   history.advance(atEighteenLocal - 15 * 60);
   history.advance(atEighteenLocal);
   rest.update(topology, history, atEighteenLocal);
-  assert(rest.zonePwm(0) == 50 && rest.zonePwm(1) == 50);
-  assert(rest.luminairePwm(1) == 50 && rest.luminairePwm(2) == 50);
+  assert(rest.zonePwm(0) == 40 && rest.zonePwm(1) == 40);
+  assert(rest.luminairePwm(1) == 40 && rest.luminairePwm(2) == 40);
 
   // Horário inválido volta ao padrão, inclusive após previsão alta.
   rest.update(topology, history, 0);
