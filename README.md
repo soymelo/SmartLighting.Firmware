@@ -5,8 +5,6 @@ Abra esta pasta no VS Code com a extensão PlatformIO. O `platformio.ini` fixa
 `esp32dev`, framework Arduino e pioarduino `55.03.311` (Arduino Core 3.3.11).
 `src_dir = .` inclui o programa na raiz; `build_src_filter` seleciona
 `SmartLightingFirmware.cpp` e os módulos `.cpp` em `src/`.
-O `src/main.cpp` de exemplo, criado pelo PlatformIO, permanece no projeto,
-mas não participa da compilação.
 
 No terminal, execute `pio run -e esp32dev` para compilar sem gravar a placa.
 No VS Code, use **PlatformIO: Build** ou o ícone de marca de verificação na
